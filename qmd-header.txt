@@ -1,0 +1,13 @@
+---
+title: 'HW-1'
+
+format:
+  html:
+    toc: true
+    self-contained: true
+    code-fold: false
+    output-file: HW-1.html
+    embed-resources: true
+
+jupyter: python3
+---
