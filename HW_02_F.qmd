@@ -1,0 +1,1178 @@
+---
+title: Homework-2
+
+format:
+  html:
+    toc: true
+    self-contained: true
+    code-fold: false
+    output-file: Homework-02.html
+    embed-resources: true
+
+jupyter: python3
+---
+
+`ANN training in Keras or Pytorch & Hyper-parameter tuning`
+
+## Overview
+
+* Classification is one of the most common forms of supervised machine learning
+* In this homework we will explore "model tuning" for the case of a multi-class classification problem, as applied the MNIST data set
+* `You can do this assignment in either Keras OR PyTorch` (or both), it is your choice.
+
+## Submission
+
+* You need to upload TWO documents to Canvas when you are done
+  * (1) A PDF (or HTML) of the completed form of the `HW-2.ipynb` document
+* The final uploaded version should NOT have any code-errors present
+* All outputs must be visible in the uploaded version, including code-cell outputs, images, graphs, etc
+
+`IMPORTANT`: THERE ARE MANY WAYS TO DO THIS, SO FEEL FREE TO DEVIATE SLIGHTLY FROM THE EXACT DETAILS, BUT THE OVERALL RESULT AND FLOW SHOULD MATCH WHAT IS OUTLINED BELOW.
+
+
+### quick question
+
+The submission details say we need to upload two documents but then only list one? is the pdf/html as well as the ipynb?
+
+## HW-2.1: Data preparation
+
+* Normalize the data as needed
+* Partition data into training, validation, and test (i.e. leave one out CV)
+  * One option to do this is to give these arrays global scope so they are seen inside the training function (so they don't need to be passed to functions)
+* **Optional but recommended:** Create a K-fold cross validation data set, rather than just doing leave one out
+* Do any other preprocessing you feel is needed
+
+### Using Fashion MNIST
+
+99.999% sure Dr. Hickman said it was ok to use Fashion MNIST instead of regular MNIST, which I will be doing.
+
+```{python}
+import torch
+from torch import nn
+
+import torchvision
+from torchvision import transforms
+from torchvision import datasets
+from torchvision.transforms import ToTensor
+
+from tqdm.auto import tqdm
+
+import numpy as np
+```
+
+Normalizing the data below using ToTensor()
+
+```{python}
+train_data = datasets.FashionMNIST(
+    root="data",
+    train=True,
+    download=True,
+    transform=torchvision.transforms.ToTensor(),
+    target_transform=None
+)
+
+test_data = datasets.FashionMNIST(
+    root="data",
+    train=False,
+    download=True,
+    transform=ToTensor(),
+    target_transform=None
+)
+
+class_names = train_data.classes
+```
+
+```{python}
+#| colab: {base_uri: 'https://localhost:8080/'}
+print(class_names)
+```
+
+```{python}
+#| colab: {base_uri: 'https://localhost:8080/'}
+print(f'Length Train: {len(train_data)}')
+print(f'Length Test: {len(test_data)}')
+```
+
+```{python}
+from torch.utils.data import random_split
+
+train_size = .9 * len(train_data)
+val_size = len(train_data) - train_size
+
+#make val 10% of train
+train_data, val_data = random_split(train_data, lengths=[.9, .1])
+```
+
+Little heavy on the test data, so I went with just 10% of the traing data for validation
+
+```{python}
+#| colab: {base_uri: 'https://localhost:8080/'}
+print(f'Length Train: {len(train_data)}')
+print(f'Length Val: {len(val_data)}')
+```
+
+```{python}
+#| colab: {base_uri: 'https://localhost:8080/'}
+from torch.utils.data import DataLoader
+BATCH_SIZE = 32
+
+train_dataloader = DataLoader(dataset=train_data,
+                              batch_size=BATCH_SIZE,
+                              shuffle=True)
+
+val_dataloader = DataLoader(dataset=val_data,
+                            batch_size=BATCH_SIZE,
+                            shuffle=True)
+
+test_dataloader = DataLoader(dataset=test_data,
+                              batch_size=BATCH_SIZE)
+
+train_dataloader, val_dataloader, test_dataloader
+```
+
+```{python}
+print(torch.__version__)
+```
+
+```{python}
+#| colab: {base_uri: 'https://localhost:8080/', height: 35}
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device
+```
+
+Doing some visualization and shape printing below to make sure is loaded as expected.
+
+```{python}
+import random
+random.seed(42)
+train_samples = []
+train_labels = []
+
+val_samples = []
+val_labels = []
+
+test_samples = []
+test_labels = []
+for sample, label in random.sample(list(train_data), k=3):
+  train_samples.append(sample)
+  train_labels.append(label)
+
+for sample, label in random.sample(list(val_data), k=3):
+  val_samples.append(sample)
+  val_labels.append(label)
+
+for sample, label in random.sample(list(test_data), k=3):
+  test_samples.append(sample)
+  test_labels.append(label)
+```
+
+```{python}
+#| colab: {base_uri: 'https://localhost:8080/'}
+print(f'train length: {len(train_samples)}')
+print(f'val shape 0: {val_samples[0].shape}')
+print(f'test shape 2: {test_samples[2].shape}')
+```
+
+Going to do a little visualization just to make sure the data is how I expect
+
+```{python}
+#| colab: {base_uri: 'https://localhost:8080/', height: 469}
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+plt.imshow(train_samples[0].squeeze(), cmap='gray')
+plt.title(class_names[train_labels[0]])
+```
+
+```{python}
+#| colab: {base_uri: 'https://localhost:8080/', height: 469}
+plt.imshow(val_samples[0].squeeze(), cmap='gray')
+plt.title(class_names[val_labels[0]])
+```
+
+```{python}
+#| colab: {base_uri: 'https://localhost:8080/', height: 469}
+plt.imshow(test_samples[0].squeeze(), cmap='gray')
+plt.title(class_names[test_labels[0]])
+```
+
+## HW-2.2: Generalized model
+
+* Create a `General` model function (or class) that takes hyper-parameters and evaluates the model
+  * The function should work with a set of hyper parameters than can be easily be controlled and varied by the user (for later parameter tuning)
+  * This should work for the training, test, and validation set
+* Feel free to recycle code from the lab assignments and demo's  
+* Use the deep learning best practices that we discussed in class.
+* Document what is going on in the code, as needed, with narrative markdown text between cells.
+
+Going to use a resnet like architecture for the model.
+
+```{python}
+import torch.nn as nn
+
+class BasicResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1, dropout=0.15, padding=1, activation='relu'):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=padding, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        if activation == 'relu':
+          self.activation = nn.ReLU(inplace=True)
+        elif activation == 'sigmoid':
+          self.activation = nn.Sigmoid()
+        elif activation == 'tanh':
+          self.activation = nn.Tanh()
+        else:
+          print(f'Activation Given: {activation}')
+          print(type(activation))
+          raise ValueError("Activation Function Must Be relu or sigmoid")
+        self.dropout = nn.Dropout(p=dropout)
+
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=padding, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels)
+            )
+
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.activation(out)
+        out = self.dropout(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        shortcut = self.shortcut(x)
+
+        out += shortcut
+        out = self.activation(out)
+        return out
+
+
+class FashionMNISTResNet(nn.Module):
+    def __init__(self, input_shape, channels, output_shape, num_layers, activation='relu', dropout=.15):
+        super().__init__()
+        self.activation = nn.ReLU(inplace=True) if activation == 'relu' else nn.Sigmoid() if activation == 'sigmoid' else nn.Tanh()
+
+        #init the layers with conv2d and batchnorm2d
+        self.layers = nn.ModuleList([
+            nn.Conv2d(input_shape, channels[0], kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(channels[0]),
+            self.activation,
+            nn.Dropout(p=dropout)
+        ])
+
+        #add in resblocks
+        for i in range(num_layers):
+            self.layers.append(BasicResBlock(channels[i], channels[min(i+1, len(channels)-1)], activation=activation, dropout=dropout))
+            if i < len(channels) - 1:
+                self.layers.append(nn.Conv2d(channels[i], channels[i+1], kernel_size=3, stride=2, padding=1))
+                self.layers.append(nn.BatchNorm2d(channels[i+1]))
+                self.layers.append(self.activation)
+                self.layers.append(nn.Dropout(p=dropout))
+
+        #global average pooling
+        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+
+        #final linear layer
+        self.linear = nn.Linear(channels[-1], output_shape)
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+
+        x = self.global_avg_pool(x)  #apply global average pooling
+        x = x.view(x.size(0), -1)  #flatten
+        x = self.linear(x)
+        return x
+    
+#EDITS TO ADD IN
+class FashionMNISTANN(nn.Module):
+    def __init__(self, input_size, hidden_size, output_shape, num_layers, activation='relu', dropout=0.15):
+        super(FashionMNISTANN, self).__init__()
+        self.layers = nn.ModuleList()
+
+        #handle multiple activation functions
+        if activation == 'relu':
+            self.activation = nn.ReLU()
+        elif activation == 'sigmoid':
+            self.activation = nn.Sigmoid()
+        elif activation == 'tanh':
+            self.activation = nn.Tanh()
+        else:
+            raise ValueError("Unsupported activation function")
+
+        #input
+        self.layers.append(nn.Linear(input_size, hidden_size))
+
+        #add hidden layers based on num_layers
+        for _ in range(num_layers - 1):
+            self.layers.append(self.activation)
+            self.layers.append(nn.Dropout(dropout))
+            self.layers.append(nn.Linear(hidden_size, hidden_size))
+
+        #final activation and dropout
+        self.layers.append(self.activation)
+        self.layers.append(nn.Dropout(dropout))
+
+        #linear output layer
+        self.layers.append(nn.Linear(hidden_size, output_shape))
+
+    def forward(self, x):
+        out = x.view(x.size(0), -1)  #flatten
+        for layer in self.layers:
+            out = layer(out)
+        return out
+```
+
+## HW-2.3: Model training function
+
+* You can do this in either a function (or python class), or however you think is best.
+* **Create a training function** (or class) that takes hyper-parameter choices and trains the model
+  * If you are doing "leave one out", your training function only needs to do one training per hyper-parameter choice
+  * If you are doing K-fold cross validation, you should train the model K times for each hyper-parameter choice, and report the average result cross the training runs at the end (this is technically a better practice but requires more computation).
+  * Use a dense feed forward ANN model, with the correct output layer activation, and correct loss function
+  * `You MUST use early stopping` inside the function, otherwise it defeats the point
+  * **Have at least the following hyper-parameters as inputs to this function**
+    * L1 regularization constant, L2 regularization constant, dropout rate
+    * Learning rate
+    * Weight Initialization: Fully random vs Xavier Weight Initialization
+    * Hidden layer activation function choice (use relu, sigmoid, or tanh)
+    * Number and size of ANN hidden layers
+    * Optimizer choice, have at least three included (Adam, SGD, or RmsProp)
+    * You can wrap all of the hyper-parameter arguments into a dictionary, or do it however you want  
+  * **Visualization**
+    * Include a boolean parameter as a function input that controls whether visualization is created or not
+    * If `true`, Monitor training and validation throughout training by plotting
+    * Report a confusion matrix
+  * Return the final training and validation error (averaged if using K-fold)
+    * again, you must use early stopping to report the best training/validation loss without over-fitting
+* Depending how you do this, it can be a lot of computation, start small and scale up and consider using Co-lab
+  
+
+Performed 2.3 as a function. All of the mentioned hyperparameters are adjusted during the hyperparameter training below. Also, with Dr Hickman saying we could use fashion MNIST rather than just MNIST I thought it made more sense to use a cnn rather than just a dense feed forward ANN and that it would still acomplish the learning objectives. Additionally, I'm interested in computer vision problems and wanted to take the chance to better understand CNN architectures. 
+
+```{python}
+from sklearn.metrics import confusion_matrix
+
+def train_model(model, dataloaders, criterion, num_epochs, optimizer='adam', early_stopping_patience=10, visualize=True, l1_strength=0.0, l2_strength=0.0, lr=0.001, init_type='random'):
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+
+    optimizer = optimizer.lower()
+
+    if optimizer == 'adam':
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    elif optimizer == 'sgd':
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+    elif optimizer == 'rmsprop':
+        optimizer = torch.optim.RMSprop(model.parameters(), lr=lr)
+    else:
+        raise ValueError("Unsupported optimizer")
+
+    best_model_wts = copy.deepcopy(model.state_dict())
+    best_val_loss = float('inf')
+    epochs_no_improve = 0  #early stopping counter
+
+    train_losses, val_losses = [], []
+    best_confusion_matrix = None
+    best_train_loss = float('inf')
+
+    for epoch in range(num_epochs):
+        if epoch % 10 == 0:
+          print(f'Epoch {epoch+1}/{num_epochs}')
+          print('-' * 10)
+
+        for phase in ['train', 'val']:
+            if phase == 'train':
+                model.train()
+            else:
+                model.eval()
+
+            running_loss = 0.0
+            my_labels, my_preds = [], []
+
+            for inputs, labels in dataloaders[phase]:
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+
+                #zero the gradients
+                optimizer.zero_grad()
+
+                #forward
+                with torch.set_grad_enabled(phase == 'train'):
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
+
+                    #add in l1 and l2 regularization
+                    if l1_strength > 0:
+                        l1_regularization = torch.tensor(0., requires_grad=True).to(device)
+                        for param in model.parameters():
+                            l1_regularization = l1_regularization + torch.norm(param, 1)
+                        loss += l1_strength * l1_regularization
+                    
+                    if l2_strength > 0:
+                        l2_regularization = torch.tensor(0., requires_grad=True).to(device)
+                        for param in model.parameters():
+                            l2_regularization = l2_regularization + torch.norm(param, 2)
+                        loss += l2_strength * l2_regularization
+
+                    #backward and optimize only if in training phase
+                    if phase == 'train':
+                        loss.backward()
+                        optimizer.step()
+
+                # Statistics
+                running_loss += loss.item() * inputs.size(0)
+
+                _, preds = torch.max(outputs, 1)
+                my_labels.extend(labels.cpu().numpy())
+                my_preds.extend(preds.cpu().numpy())
+
+            epoch_loss = running_loss / len(dataloaders[phase].dataset)
+            if epoch % 10 == 0:
+              print(f'{phase} Loss: {epoch_loss:.4f}')
+
+            #deep copy the model and implement early stopping
+            if phase == 'val':
+                val_losses.append(epoch_loss)
+
+                if epoch_loss < best_val_loss:
+                    best_val_loss = epoch_loss
+                    best_model_wts = copy.deepcopy(model.state_dict())
+                    epochs_no_improve = 0
+                    best_confusion_matrix = confusion_matrix(my_labels, my_preds)
+                else:
+                    epochs_no_improve += 1
+            else:
+                train_losses.append(epoch_loss)
+                if epoch_loss < best_train_loss:
+                  best_train_loss = epoch_loss
+
+        if epochs_no_improve >= early_stopping_patience:
+            print("Stopping Early")
+            break
+
+    if visualize:
+        plt.plot(train_losses, label='Training loss')
+        plt.plot(val_losses, label='Validation loss')
+        plt.xlabel('Epochs')
+        plt.ylabel('Loss')
+        plt.title(f'Training with Learning Rate {lr} and Initialization {init_type}')
+        plt.legend()
+        plt.show()
+
+    # Load best model weights
+    model.load_state_dict(best_model_wts)
+
+    print(best_confusion_matrix)
+    return model, best_train_loss, best_val_loss
+```
+
+## HW-2.4: Hyper-parameter tuning
+
+* Keep detailed records of hyper-parameter choices and associated training & validation errors
+* Think critically and visualize the results of the search as needed
+
+* **Do each of these in a different sub-section of your notebook**
+  
+* **Explore hyper-parameter choice-0**
+  * for hidden activation=Relu, hidden layers = [32,32], optimizer=adam
+  * Vary the learning rate via a grid search pattern
+  * Plot training and validation error as a function of the learning rate
+  * Repeat this exercise for both random and Xavier weight initialization
+
+* **Explore hyper-parameter choice-1**
+  * for hidden activation=relu, hidden layers = [64,64], optimizer=adam
+  * Vary L1 and L2 in a 10x10 grid search (without dropout)
+  * Plot validation and training error as a function of L1 and L2 regularization in a 2D heatmap
+  * Plot the ratio (or difference) of validation to training error as a function of L1 and L2 regularization in a 2D heatmap
+
+* **Explore hyper-parameter choice-2**
+  * for hidden activation=sigmoid, hidden layers = [96,96,96], optimizer=**rmsprop**
+  * Vary drop-out parameter in a 1x10 grid search (without L1 or L2 regularization)
+  * Plot training and validation error as a function of dropout rate  
+  * Plot the ratio (or difference) of validation to training error as a function of dropout rate  
+
+* **Explore hyper-parameter choice-3:**
+  * for hidden activation=relu, hidden layers = [96,96,96], optimizer=**adam**
+  * Vary drop-out parameter in a 1x10 grid search (without L1 or L2 regularization)
+  * Plot training and validation as a function of dropout rate  
+  * Plot the ratio (or difference) of validation to training error as a function of dropout rate  
+
+* `Optional` Systematically search for the best regularization parameters choice (3D search) using random search algorithm
+  * (https://en.wikipedia.org/wiki/Random_search)[https://en.wikipedia.org/wiki/Random_search]
+  * Try to see how deep you can get the ANN (max hidden layers) without suffering from the vanishing gradient effect  
+  
+* `Final fit`
+  * At the very end, select a best fit model and report, training, validation, and test errors at the very end
+  * Make sure your "plotting variable=True" when for the final training
+  
+
+Hyperparameter Choice 0
+
+Notes: I started with more learning rates, but eventually narrowed it down to these 3 to save time. The epochs are higher on this run because I want to give some of the smaller learning rates a chance to converge. I like the learning rate 0.0001 for this portion because it does converges in a timely manner while remaining stable. Additionally, I didnt see a huge difference between random and xavier initialization, but I think xavier performed slighly better. 
+
+Resnet Like Model 
+
+```{python}
+#| colab: {base_uri: 'https://localhost:8080/'}
+import copy
+from collections import defaultdict
+import torch.optim as optim
+import time
+
+
+
+#initialize model
+def init_weights(m, init_type="random"):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+        if init_type == "xavier":
+            nn.init.xavier_uniform_(m.weight)
+        else:
+            nn.init.uniform_(m.weight, -0.1, 0.1)
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
+
+learning_rates = [.00001, .0001, .001]
+init_types = ["random", "xavier"]
+results = defaultdict(list)
+my_activation = "relu"
+
+criterion = nn.CrossEntropyLoss()
+
+for init_type in init_types:
+    start_time = time.time()
+    for lr in learning_rates:
+        model = FashionMNISTResNet(input_shape=1, channels=[32, 32], output_shape=10, activation=my_activation, num_layers=2, dropout=.15)
+
+        #train model
+        trained_model, best_train_loss, best_val_loss = train_model(model, {'train': train_dataloader, 'val': val_dataloader},
+                                                   criterion=criterion, optimizer='adam',
+                                                   num_epochs=30, early_stopping_patience=5, visualize=True, lr=lr, init_type=init_type)
+
+        #save results
+        results[init_type].append({'lr': lr, 'best_val_loss': best_val_loss})
+
+        #print time in mm:ss
+        print(f'Elapsed Time: {time.strftime("%M:%S", time.gmtime(time.time() - start_time))}')
+
+#visualize
+for init_type in init_types:
+    lrs = [result['lr'] for result in results[init_type]]
+    losses = [result['best_val_loss'] for result in results[init_type]]
+    plt.plot(lrs, losses, label=f"{init_type} init")
+plt.xscale('log')
+plt.xlabel('Learning Rate')
+plt.ylabel('Validation Loss')
+plt.legend()
+plt.title('Learning Rate vs. Validation Loss')
+plt.show()
+```
+
+### Deep Feed Forward ANN
+
+```{python}
+#duplicated so I can test models independently
+import copy
+from collections import defaultdict
+import torch.optim as optim
+import time
+
+#initialize model
+def init_weights(m, init_type="random"):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+        if init_type == "xavier":
+            nn.init.xavier_uniform_(m.weight)
+        else:
+            nn.init.uniform_(m.weight, -0.1, 0.1)
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
+
+
+
+learning_rates = [.00001, .0001, .001]
+init_types = ["random", "xavier"]
+results = defaultdict(list)
+my_activation = "relu"
+
+criterion = nn.CrossEntropyLoss()
+
+#EDITS TO ADD IN
+ann_in_size = 28*28
+ann_hidden_size = 32 #not sure if the intent was to have the hidden size take a list, but since all of the sizes are the same I'll just use an int and avoid the added work to accept a list of sizes
+ann_len = 2
+
+for init_type in init_types:
+    for lr in learning_rates:
+        start_time = time.time()
+
+        model = FashionMNISTANN(input_size=ann_in_size, hidden_size=ann_hidden_size, output_shape=10, activation=my_activation, num_layers=ann_len, dropout=.15)
+        model.apply(lambda m: init_weights(m, init_type=init_type))
+
+        #train model
+        trained_model, best_train_loss, best_val_loss = train_model(model, {'train': train_dataloader, 'val': val_dataloader},
+                                                   criterion=criterion, optimizer='adam',
+                                                   num_epochs=30, early_stopping_patience=5, visualize=True, lr=lr, init_type=init_type)
+
+        #save results
+        results[init_type].append({'lr': lr, 'best_val_loss': best_val_loss})
+        #print elapsed time with two decimal places formated in mm:ss
+        print(f'Elapsed Time: {time.strftime("%M:%S", time.gmtime(time.time() - start_time))}')
+
+#visualize
+for init_type in init_types:
+    lrs = [result['lr'] for result in results[init_type]]
+    losses = [result['best_val_loss'] for result in results[init_type]]
+    plt.plot(lrs, losses, label=f"{init_type} init")
+plt.xscale('log')
+plt.xlabel('Learning Rate')
+plt.ylabel('Validation Loss')
+plt.legend()
+plt.title('Learning Rate vs. Validation Loss')
+plt.show()
+```
+
+Hyperparameter Tuning 1
+
+I did explore this hyperparameter with more epochs, but it took a long time to run so after getting an idea of how the results looked. I'm taking it down to 2 epochs because I think that should still do an ok job capturing the effects of the l1 and l2 grid search regularization. 
+
+```{python}
+
+
+lr = 0.0001
+init_type = 'xavier'
+
+
+#hyperparameters for grid search
+l1_values = np.logspace(-4, -1, 10)
+l2_values = np.logspace(-4, -1, 10)
+
+results = defaultdict(lambda: defaultdict(dict))
+
+for l1_strength in l1_values:
+    print(f"Training with L1 strength: {l1_strength}")
+    for l2_strength in l2_values:
+        start_time = time.time()
+        print(f"Training with L2 strength: {l2_strength}")
+        model = FashionMNISTResNet(input_shape=1, channels=[64, 64], output_shape=10, num_layers=2, activation=my_activation, dropout=0)  
+        model.apply(lambda m: init_weights(m, init_type='xavier'))
+
+        #train model with L1 regularization
+        trained_model, train_loss, val_loss = train_model(model, {'train': train_dataloader, 'val': val_dataloader},
+                                                          criterion=criterion, optimizer='adam', num_epochs=2, lr=lr, init_type=init_type, l1_strength=l1_strength, early_stopping_patience=5, visualize=False)
+
+        #store results
+        results[l1_strength][l2_strength]['train_loss'] = train_loss
+        results[l1_strength][l2_strength]['val_loss'] = val_loss
+
+        print(f'Elapsed Time: {time.time() - start_time}')
+
+#convert results to numpy arrays for plotting
+train_losses = np.array([[results[l1][l2]['train_loss'] for l2 in l2_values] for l1 in l1_values])
+val_losses = np.array([[results[l1][l2]['val_loss'] for l2 in l2_values] for l1 in l1_values])
+
+#plotting
+fig, ax = plt.subplots(1, 3, figsize=(20, 7))
+
+#training loss
+c1 = ax[0].imshow(train_losses, cmap='viridis', aspect='auto')
+ax[0].set_title('Training Loss')
+ax[0].set_xlabel('L2 Strength')
+ax[0].set_ylabel('L1 Strength')
+ax[0].set_xticks(range(len(l2_values)))
+ax[0].set_yticks(range(len(l1_values)))
+ax[0].set_xticklabels([f"{val:.1e}" for val in l2_values], rotation=45)
+ax[0].set_yticklabels([f"{val:.1e}" for val in l1_values])
+fig.colorbar(c1, ax=ax[0])
+
+#validation loss
+c2 = ax[1].imshow(val_losses, cmap='viridis', aspect='auto')
+ax[1].set_title('Validation Loss')
+ax[1].set_xlabel('L2 Strength')
+ax[1].set_ylabel('L1 Strength')
+ax[1].set_xticks(range(len(l2_values)))
+ax[1].set_yticks(range(len(l1_values)))
+ax[1].set_xticklabels([f"{val:.1e}" for val in l2_values], rotation=45)
+ax[1].set_yticklabels([f"{val:.1e}" for val in l1_values])
+fig.colorbar(c2, ax=ax[1])
+
+#validation/training loss ratio
+ratio = val_losses / train_losses
+c3 = ax[2].imshow(ratio, cmap='viridis', aspect='auto')
+ax[2].set_title('Validation/Training Loss Ratio')
+ax[2].set_xlabel('L2 Strength')
+ax[2].set_ylabel('L1 Strength')
+ax[2].set_xticks(range(len(l2_values)))
+ax[2].set_yticks(range(len(l1_values)))
+ax[2].set_xticklabels([f"{val:.1e}" for val in l2_values], rotation=45)
+ax[2].set_yticklabels([f"{val:.1e}" for val in l1_values])
+fig.colorbar(c3, ax=ax[2])
+
+plt.show()
+```
+
+```{python}
+lr = 0.0001
+init_type = 'xavier'
+
+
+#hyperparameters for grid search
+l1_values = np.logspace(-4, -1, 10)
+l2_values = np.logspace(-4, -1, 10)
+
+results = defaultdict(lambda: defaultdict(dict))
+
+#some of these are just restated for clarity
+ann_in_size = 28*28
+ann_hidden_size = 64
+ann_len = 2
+
+for l1_strength in l1_values:
+    print(f"Training with L1 strength: {l1_strength}")
+    start_time = time.time()
+    for l2_strength in l2_values:
+        print(f"Training with L2 strength: {l2_strength}")
+        model = FashionMNISTANN(input_size=ann_in_size, hidden_size=ann_hidden_size, output_shape=10, activation=my_activation, num_layers=ann_len, dropout=.15)
+        model.apply(lambda m: init_weights(m, init_type='xavier'))
+
+        #train model with L1 regularization
+        trained_model, train_loss, val_loss = train_model(model, {'train': train_dataloader, 'val': val_dataloader},
+                                                          criterion=criterion, optimizer='adam', num_epochs=2, lr=lr, init_type=init_type, l1_strength=l1_strength, early_stopping_patience=5, visualize=False)
+
+        #store results
+        results[l1_strength][l2_strength]['train_loss'] = train_loss
+        results[l1_strength][l2_strength]['val_loss'] = val_loss
+
+        #print elapsed time with two decimal places formated in mm:ss
+        print(f'Elapsed Time: {time.strftime("%M:%S", time.gmtime(time.time() - start_time))}')
+
+#convert results to numpy arrays for plotting
+train_losses = np.array([[results[l1][l2]['train_loss'] for l2 in l2_values] for l1 in l1_values])
+val_losses = np.array([[results[l1][l2]['val_loss'] for l2 in l2_values] for l1 in l1_values])
+
+#plotting
+fig, ax = plt.subplots(1, 3, figsize=(20, 7))
+
+#training loss
+c1 = ax[0].imshow(train_losses, cmap='viridis', aspect='auto')
+ax[0].set_title('Training Loss')
+ax[0].set_xlabel('L2 Strength')
+ax[0].set_ylabel('L1 Strength')
+ax[0].set_xticks(range(len(l2_values)))
+ax[0].set_yticks(range(len(l1_values)))
+ax[0].set_xticklabels([f"{val:.1e}" for val in l2_values], rotation=45)
+ax[0].set_yticklabels([f"{val:.1e}" for val in l1_values])
+fig.colorbar(c1, ax=ax[0])
+
+#validation loss
+c2 = ax[1].imshow(val_losses, cmap='viridis', aspect='auto')
+ax[1].set_title('Validation Loss')
+ax[1].set_xlabel('L2 Strength')
+ax[1].set_ylabel('L1 Strength')
+ax[1].set_xticks(range(len(l2_values)))
+ax[1].set_yticks(range(len(l1_values)))
+ax[1].set_xticklabels([f"{val:.1e}" for val in l2_values], rotation=45)
+ax[1].set_yticklabels([f"{val:.1e}" for val in l1_values])
+fig.colorbar(c2, ax=ax[1])
+
+#validation/training loss ratio
+ratio = val_losses / train_losses
+c3 = ax[2].imshow(ratio, cmap='viridis', aspect='auto')
+ax[2].set_title('Validation/Training Loss Ratio')
+ax[2].set_xlabel('L2 Strength')
+ax[2].set_ylabel('L1 Strength')
+ax[2].set_xticks(range(len(l2_values)))
+ax[2].set_yticks(range(len(l1_values)))
+ax[2].set_xticklabels([f"{val:.1e}" for val in l2_values], rotation=45)
+ax[2].set_yticklabels([f"{val:.1e}" for val in l1_values])
+fig.colorbar(c3, ax=ax[2])
+
+plt.show()
+```
+
+Hyperparameter Tuning 2
+
+```{python}
+#10 values for dropout
+dropout_values = np.linspace(0, 0.9, 10)  
+results = defaultdict(dict)  
+
+for dropout_rate in dropout_values:
+    start_time = time.time()
+
+    #init based on hyperparameter choice 2
+    model = FashionMNISTResNet(input_shape=1, channels=[96, 96, 96], output_shape=10, num_layers=2, activation='sigmoid', dropout=dropout_rate)
+    model.apply(lambda m: init_weights(m, init_type='xavier')) 
+
+    optimizer = 'rmsprop'
+
+    #train
+    trained_model, train_loss, val_loss = train_model(
+        model,
+        {'train': train_dataloader, 'val': val_dataloader},  
+        criterion=criterion,
+        optimizer=optimizer,
+        num_epochs=10,
+        early_stopping_patience=5,
+        visualize=False,
+        l1_strength=0.0,
+        l2_strength=0.0,
+    )
+
+    #save results
+    results[dropout_rate]['train_loss'] = train_loss
+    results[dropout_rate]['val_loss'] = val_loss
+
+    #print elapsed time with two decimal places formated in mm:ss
+    print(f'Elapsed Time: {time.strftime("%M:%S", time.gmtime(time.time() - start_time))}')
+
+dropout_rates = np.array(list(results.keys()))
+train_losses = np.array([results[rate]['train_loss'] for rate in dropout_rates])
+val_losses = np.array([results[rate]['val_loss'] for rate in dropout_rates])
+
+plt.figure(figsize=(10, 5))
+
+#training loss plot
+plt.subplot(1, 2, 1)
+plt.plot(dropout_rates, train_losses, marker='o', label='Training Loss')
+plt.xlabel('Dropout Rate')
+plt.ylabel('Loss')
+plt.title('Training Loss vs. Dropout Rate')
+plt.legend()
+
+#validation loss plot
+plt.subplot(1, 2, 2)
+plt.plot(dropout_rates, val_losses, marker='o', color='r', label='Validation Loss')
+plt.xlabel('Dropout Rate')
+plt.ylabel('Loss')
+plt.title('Validation Loss vs. Dropout Rate')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+#plotting the ratio
+ratio = val_losses / train_losses 
+plt.figure(figsize=(5, 5))
+plt.plot(dropout_rates, ratio, marker='o', color='g', label='Val/Train Loss Ratio')
+plt.xlabel('Dropout Rate')
+plt.ylabel('Ratio')
+plt.title('Validation/Training Loss Ratio vs. Dropout Rate')
+plt.legend()
+plt.show()
+```
+
+```{python}
+#10 values for dropout
+dropout_values = np.linspace(0, 0.9, 10)  
+results = defaultdict(dict)  
+
+ann_in_size = 28*28
+ann_hidden_size = 96
+ann_len = 3
+
+for dropout_rate in dropout_values:
+    start_time = time.time()
+
+    #init based on hyperparameter choice 2
+    model = FashionMNISTANN(input_size=ann_in_size, hidden_size=ann_hidden_size, output_shape=10, activation='sigmoid', num_layers=ann_len, dropout=dropout_rate)
+    model.apply(lambda m: init_weights(m, init_type='xavier')) 
+
+    optimizer = 'rmsprop'
+
+    #train
+    trained_model, train_loss, val_loss = train_model(
+        model,
+        {'train': train_dataloader, 'val': val_dataloader},  
+        criterion=criterion,
+        optimizer=optimizer,
+        num_epochs=10,
+        early_stopping_patience=5,
+        visualize=False,
+        l1_strength=0.0,
+        l2_strength=0.0,
+    )
+
+    #save results
+    results[dropout_rate]['train_loss'] = train_loss
+    results[dropout_rate]['val_loss'] = val_loss
+
+    #print elapsed time with two decimal places formated in mm:ss
+    print(f'Elapsed Time: {time.strftime("%M:%S", time.gmtime(time.time() - start_time))}')
+
+dropout_rates = np.array(list(results.keys()))
+train_losses = np.array([results[rate]['train_loss'] for rate in dropout_rates])
+val_losses = np.array([results[rate]['val_loss'] for rate in dropout_rates])
+
+plt.figure(figsize=(10, 5))
+
+#training loss plot
+plt.subplot(1, 2, 1)
+plt.plot(dropout_rates, train_losses, marker='o', label='Training Loss')
+plt.xlabel('Dropout Rate')
+plt.ylabel('Loss')
+plt.title('Training Loss vs. Dropout Rate')
+plt.legend()
+
+#validation loss plot
+plt.subplot(1, 2, 2)
+plt.plot(dropout_rates, val_losses, marker='o', color='r', label='Validation Loss')
+plt.xlabel('Dropout Rate')
+plt.ylabel('Loss')
+plt.title('Validation Loss vs. Dropout Rate')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+#plotting the ratio
+ratio = val_losses / train_losses 
+plt.figure(figsize=(5, 5))
+plt.plot(dropout_rates, ratio, marker='o', color='g', label='Val/Train Loss Ratio')
+plt.xlabel('Dropout Rate')
+plt.ylabel('Ratio')
+plt.title('Validation/Training Loss Ratio vs. Dropout Rate')
+plt.legend()
+plt.show()
+```
+
+Hyperparameter Tuning 3
+
+```{python}
+#10 values for dropout
+dropout_values = np.linspace(0, 0.9, 10)  
+results = defaultdict(dict)  
+
+for dropout_rate in dropout_values:
+    start_time = time.time()
+
+    #init based on hyperparameter choice 2
+    model = FashionMNISTResNet(input_shape=1, channels=[96, 96, 96], output_shape=10, num_layers=2, activation='relu', dropout=dropout_rate)
+    model.apply(lambda m: init_weights(m, init_type='xavier'))  
+
+    optimizer = 'adam'
+
+    #train
+    trained_model, train_loss, val_loss = train_model(
+        model,
+        {'train': train_dataloader, 'val': val_dataloader},  
+        criterion=criterion,
+        optimizer=optimizer,
+        num_epochs=10,
+        early_stopping_patience=5,
+        visualize=False,
+        l1_strength=0.0,
+        l2_strength=0.0,
+    )
+
+    #save results
+    results[dropout_rate]['train_loss'] = train_loss
+    results[dropout_rate]['val_loss'] = val_loss
+
+    #print elapsed time with two decimal places formated in mm:ss   
+    print(f'Elapsed Time: {time.strftime("%M:%S", time.gmtime(time.time() - start_time))}')
+
+dropout_rates = np.array(list(results.keys()))
+train_losses = np.array([results[rate]['train_loss'] for rate in dropout_rates])
+val_losses = np.array([results[rate]['val_loss'] for rate in dropout_rates])
+
+plt.figure(figsize=(10, 5))
+
+#training loss plot
+plt.subplot(1, 2, 1)
+plt.plot(dropout_rates, train_losses, marker='o', label='Training Loss')
+plt.xlabel('Dropout Rate')
+plt.ylabel('Loss')
+plt.title('Training Loss vs. Dropout Rate')
+plt.legend()
+
+#validation loss plot
+plt.subplot(1, 2, 2)
+plt.plot(dropout_rates, val_losses, marker='o', color='r', label='Validation Loss')
+plt.xlabel('Dropout Rate')
+plt.ylabel('Loss')
+plt.title('Validation Loss vs. Dropout Rate')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+#plotting the ratio
+ratio = val_losses / train_losses 
+plt.figure(figsize=(5, 5))
+plt.plot(dropout_rates, ratio, marker='o', color='g', label='Val/Train Loss Ratio')
+plt.xlabel('Dropout Rate')
+plt.ylabel('Ratio')
+plt.title('Validation/Training Loss Ratio vs. Dropout Rate')
+plt.legend()
+plt.show()
+```
+
+```{python}
+#10 values for dropout
+dropout_values = np.linspace(0, 0.9, 10)  
+results = defaultdict(dict)  
+
+ann_in_size = 28*28
+ann_hidden_size = 96
+ann_len = 3
+
+for dropout_rate in dropout_values:
+    #init based on hyperparameter choice 2
+    model = FashionMNISTANN(input_size=ann_in_size, hidden_size=ann_hidden_size, output_shape=10, activation='relu', num_layers=ann_len, dropout=dropout_rate)
+    model.apply(lambda m: init_weights(m, init_type='xavier'))  
+
+    optimizer = 'adam'
+
+    #train
+    trained_model, train_loss, val_loss = train_model(
+        model,
+        {'train': train_dataloader, 'val': val_dataloader},  
+        criterion=criterion,
+        optimizer=optimizer,
+        num_epochs=10,
+        early_stopping_patience=5,
+        visualize=False,
+        l1_strength=0.0,
+        l2_strength=0.0,
+    )
+
+    #save results
+    results[dropout_rate]['train_loss'] = train_loss
+    results[dropout_rate]['val_loss'] = val_loss
+
+dropout_rates = np.array(list(results.keys()))
+train_losses = np.array([results[rate]['train_loss'] for rate in dropout_rates])
+val_losses = np.array([results[rate]['val_loss'] for rate in dropout_rates])
+
+plt.figure(figsize=(10, 5))
+
+#training loss plot
+plt.subplot(1, 2, 1)
+plt.plot(dropout_rates, train_losses, marker='o', label='Training Loss')
+plt.xlabel('Dropout Rate')
+plt.ylabel('Loss')
+plt.title('Training Loss vs. Dropout Rate')
+plt.legend()
+
+#validation loss plot
+plt.subplot(1, 2, 2)
+plt.plot(dropout_rates, val_losses, marker='o', color='r', label='Validation Loss')
+plt.xlabel('Dropout Rate')
+plt.ylabel('Loss')
+plt.title('Validation Loss vs. Dropout Rate')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+#plotting the ratio
+ratio = val_losses / train_losses 
+plt.figure(figsize=(5, 5))
+plt.plot(dropout_rates, ratio, marker='o', color='g', label='Val/Train Loss Ratio')
+plt.xlabel('Dropout Rate')
+plt.ylabel('Ratio')
+plt.title('Validation/Training Loss Ratio vs. Dropout Rate')
+plt.legend()
+plt.show()
+```
+
+# Final Fit Model 
+
+Based on my hyperparameter tuning I'm going to use my resnet like model with a learning rate of .0001, dropout=.3, l1 and l2 regularization = 1.0e-4, relu activation, and the adam optimizer for 40 epochs. I also left my model itself with channel=32 and 2 hidden layers. Based on all of my hyperperameter tuning this should be s good model that avoids overfitting on the training set. Additionally, I'll still be using things like early stopping and other hyperparameters that were used throughout the tuning process. 
+
+```{python}
+lr = 0.0001
+dropout = 0.3
+l1_strength = 1.0e-4
+l2_strength = 1.0e-4
+activation = "relu"
+num_epochs = 40
+early_stopping_patience = 5
+
+#initialize model
+model = FashionMNISTResNet(input_shape=1, channels=[32, 32], output_shape=10, activation=activation, num_layers=2, dropout=dropout)
+
+#init optimizer
+optimizer = 'adam'
+
+
+start_time = time.time()
+
+#train
+trained_model, train_loss, val_loss = train_model(model, {'train': train_dataloader, 'val': val_dataloader},
+                                                   optimizer=optimizer, 
+                                                   criterion=nn.CrossEntropyLoss(),
+                                                   num_epochs=num_epochs, 
+                                                   early_stopping_patience=early_stopping_patience, 
+                                                   l1_strength=l1_strength, 
+                                                   l2_strength=l2_strength, 
+                                                   lr=lr, 
+                                                   init_type='random',
+                                                   visualize=True) 
+
+end_time = time.time()
+
+#train time in mm:ss
+print(f"Training finished in {time.strftime('%M:%S', time.gmtime(end_time - start_time))}")
+
+
+#test
+model.eval() 
+correct = 0
+total = 0
+
+with torch.no_grad():
+    for images, labels in test_dataloader:
+        images = images.to(device)
+        labels = labels.to(device)
+        outputs = model(images)
+        _, predicted = torch.max(outputs.data, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+
+test_accuracy = 100 * correct / total
+print(f'Accuracy of the model on the test set: {test_accuracy:.2f}%')
+```
+
+# Bonus assignment
+
+`+5 bonus points`
+
+`You DO NOT need to do this if you don't want to`
+
+* Once the data is collected, this HW should be quite easy, since most of the code can be recycled from the labs & textbook.
+
+* Do this in a file called `bonus.ipynb`, have it save its results to a folder "data"
+
+`Data collection`
+
+* Develope a text based classification data-set:
+* Use the Wikipedia API to search for articles to generate the data-set
+* Select a set of highly different topics (i.e. labels), for example,
+  * multi-class case: y=(pizza, oak_trees, basketball, ... , etc)=(0,1,2, ... , N-1)
+  * You don't have to use these, you can use whatever labels you want
+  * `Have AT LEAST 10 labels.`
+  * The more different the topics, the easier the classification task should be
+* Search for Wikipedia pages about these topics and harvest the text from the pages.
+* Do some basic text cleaning as needed.
+  * e.g. use the NLTK sentence tokenizer to break the text into sentences.
+  * Then form chunks of text that are five sentences long as your "inputs".
+* The "label" for these chunks will be the search label used to find the text.
+* The data set will not be perfect.
+  * There will be chunks of text that are not related to the topic (i.e. noise).
+  * However that is just something we have to live with.
+* **Important**: Always start small when writing & debugging THEN scale up.
+* The more chunks of text you have the better.
+  * Save the text and labels to the same format used by the textbook, that way you can recycle your lab code seamlessly.
+* `Optional practice`: You can also "tag" each chunk of text with an associated "compound" sentiment score computed using the NLTK sentiment analysis. From this you can train a regression model in part-2. This is somewhat silly, and is just for educational purposes, since your using a model output to train another model.
+
+`Model training`
+
+* Repeat the model training and hyper-parameter tuning exercise for MNIST, but with your text.
+
